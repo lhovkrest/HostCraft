@@ -1,5 +1,6 @@
 // APK-packaged executable: writable app data is never directly exec'd.
 #include <jni.h>
+#include <malloc.h>
 #include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,6 +10,9 @@
 #include <unistd.h>
 
 int main(int argc, char **argv) {
+#if defined(__aarch64__)
+    mallopt(M_BIONIC_SET_HEAP_TAGGING_LEVEL, M_HEAP_TAGGING_LEVEL_NONE);
+#endif
     pid_t parent = getppid();
     prctl(PR_SET_PDEATHSIG, SIGTERM);
     if (getppid() != parent) return 125;
@@ -51,3 +55,4 @@ int main(int argc, char **argv) {
     (*vm)->DestroyJavaVM(vm);
     return failed ? 7 : 0;
 }
+

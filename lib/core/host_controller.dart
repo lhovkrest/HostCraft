@@ -3,11 +3,14 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart' show ThemeMode;
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../services/background_service.dart';
+import '../services/device_service.dart';
 import '../services/minecraft_server.dart';
 import '../services/tunnel_service.dart';
 import '../services/download_service.dart';
@@ -38,6 +41,12 @@ class HostController extends ChangeNotifier {
   DateTime? startedAt;
   List<String> lanAddresses = [];
   int serverPort = 25565;
+  int deviceRamMb = DeviceService.fallbackRamMb;
+  bool ramDetected = false;
+  bool? batteryUnrestricted;
+  ThemeMode themeMode = ThemeMode.system;
+  int get maxMemoryMb => DeviceService.maxHeapMb(deviceRamMb);
+  int get recommendedMemoryMb => DeviceService.recommendedHeapMb(deviceRamMb);
   bool get active => [
     ServerPhase.starting,
     ServerPhase.running,
@@ -71,9 +80,29 @@ class HostController extends ChangeNotifier {
         p.join((await getApplicationSupportDirectory()).path, 'HostCraft'),
       );
       await root!.create(recursive: true);
+      final detected = await DeviceService.totalRamMb();
+      if (detected != null) {
+        deviceRamMb = detected;
+        ramDetected = true;
+      }
       final file = File(p.join(root!.path, 'profile.json'));
       if (await file.exists()) {
         profile = ServerProfile.fromJson(jsonDecode(await file.readAsString()));
+      } else {
+        profile = profile.copyWith(
+          memoryMb: DeviceService.defaultHeapMb(deviceRamMb),
+        );
+      }
+      final limited = DeviceService.clampHeapMb(profile.memoryMb, deviceRamMb);
+      if (ramDetected && limited != profile.memoryMb) {
+        log(
+          'Memory allocation lowered from ${profile.memoryMb} MB to $limited MB to fit this device.',
+        );
+        profile = profile.copyWith(memoryMb: limited);
+      }
+      await _loadAppearance();
+      if (Platform.isAndroid) {
+        batteryUnrestricted = await BackgroundService.isUnrestricted();
       }
       await _attach();
       final interfaces = await NetworkInterface.list(
@@ -148,9 +177,11 @@ class HostController extends ChangeNotifier {
     if (active || phase == ServerPhase.preparing) {
       throw StateError('Stop the server before changing its setup');
     }
-    profile = next;
+    profile = next.copyWith(
+      memoryMb: DeviceService.clampHeapMb(next.memoryMb, deviceRamMb),
+    );
     await File(p.join(root!.path, 'profile.json'))
-        .writeAsString(jsonEncode(next.toJson()), flush: true);
+        .writeAsString(jsonEncode(profile.toJson()), flush: true);
     await _attach();
     error = null;
     changed();
@@ -199,6 +230,44 @@ class HostController extends ChangeNotifier {
     );
     serverPort = int.tryParse(values['server-port'] ?? '') ?? 25565;
     log('Server settings saved. They apply on the next start.');
+  }
+
+  Future<void> _loadAppearance() async {
+    try {
+      final file = File(p.join(root!.path, 'ui.json'));
+      if (!await file.exists()) return;
+      final data = jsonDecode(await file.readAsString());
+      final name = data is Map ? data['themeMode'] : null;
+      for (final mode in ThemeMode.values) {
+        if (mode.name == name) themeMode = mode;
+      }
+    } catch (_) {
+      themeMode = ThemeMode.system;
+    }
+  }
+
+  Future<void> setThemeMode(ThemeMode mode) async {
+    themeMode = mode;
+    changed();
+    final folder = root;
+    if (folder == null) return;
+    try {
+      await File(p.join(folder.path, 'ui.json'))
+          .writeAsString(jsonEncode({'themeMode': mode.name}), flush: true);
+    } catch (_) {
+      // The choice still applies for this session.
+    }
+  }
+
+  Future<void> requestBackgroundAccess() async {
+    await BackgroundService.requestUnrestricted();
+    batteryUnrestricted = await BackgroundService.isUnrestricted();
+    changed();
+  }
+
+  Future<void> unlinkPlayit() async {
+    await tunnel?.unlink();
+    changed();
   }
 
   Future<void> checkJava() => action(() async {

@@ -42,6 +42,30 @@ class BackgroundService {
     );
   }
 
+  /// Whether Android lets HostCraft run without battery restrictions. Hosts
+  /// that are throttled in the background drop players, so this matters on
+  /// phones. Always true on other platforms.
+  static Future<bool> isUnrestricted() async {
+    if (!Platform.isAndroid) return true;
+    try {
+      return await FlutterForegroundTask.isIgnoringBatteryOptimizations;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  /// Opens Android's "allow background activity" prompt.
+  static Future<void> requestUnrestricted() async {
+    if (!Platform.isAndroid) return;
+    try {
+      if (!await FlutterForegroundTask.isIgnoringBatteryOptimizations) {
+        await FlutterForegroundTask.requestIgnoreBatteryOptimization();
+      }
+    } catch (_) {
+      // The prompt is optional; hosting still works without it.
+    }
+  }
+
   static Future<void> start(String name) async {
     if (!Platform.isAndroid) return;
     if (await FlutterForegroundTask.checkNotificationPermission() !=

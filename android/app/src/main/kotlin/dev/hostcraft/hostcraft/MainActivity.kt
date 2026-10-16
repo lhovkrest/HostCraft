@@ -3,6 +3,7 @@ package dev.hostcraft.hostcraft
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import android.app.ActivityManager
 import android.os.Build
 import android.system.Os
 import android.system.OsConstants
@@ -65,12 +66,20 @@ class MainActivity : FlutterActivity() {
                 }
             }
     }
+    // Total RAM the kernel reports for this device, used to bound the server heap.
+    private fun totalMemMb(): Long {
+        val manager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val memory = ActivityManager.MemoryInfo()
+        manager.getMemoryInfo(memory)
+        return memory.totalMem / (1024L * 1024L)
+    }
     private fun info() = mapOf(
         "nativeLibraryDir" to applicationInfo.nativeLibraryDir,
         "javaHome" to File(filesDir, "java21").absolutePath,
         "bootstrap" to File(filesDir, "hostcraft-bootstrap.jar").absolutePath,
         "cacheDir" to cacheDir.absolutePath,
         "abi" to Build.SUPPORTED_ABIS.first(),
-        "clockTicks" to Os.sysconf(OsConstants._SC_CLK_TCK)
+        "clockTicks" to Os.sysconf(OsConstants._SC_CLK_TCK),
+        "totalMemMb" to totalMemMb()
     )
 }
