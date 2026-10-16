@@ -8,6 +8,7 @@ import 'screens/overview_screen.dart';
 import 'screens/settings_screen.dart';
 import 'theme.dart';
 import 'widgets.dart';
+import '../core/exit_service.dart';
 
 final ThemeData _lightTheme = buildTheme(Brightness.light);
 final ThemeData _darkTheme = buildTheme(Brightness.dark);
@@ -18,6 +19,7 @@ class HostCraftApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final mode = ref.watch(hostProvider).themeMode;
     return MaterialApp(
+      navigatorKey: rootNavigatorKey,
       title: 'HostCraft',
       debugShowCheckedModeBanner: false,
       theme: _lightTheme,

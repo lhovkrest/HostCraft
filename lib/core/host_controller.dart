@@ -209,6 +209,18 @@ class HostController extends ChangeNotifier {
     await tunnel?.stop();
     await server?.stop();
   });
+  /// Stops everything HostCraft started (Playit agent, then Java) and waits
+  /// until the processes are gone. Used when the app is being closed, so it
+  /// does not depend on [working] and uses a shorter graceful-stop window.
+  Future<void> shutdown() async {
+    try {
+      await tunnel?.stop();
+    } catch (_) {}
+    try {
+      await server?.stop(grace: const Duration(seconds: 25));
+    } catch (_) {}
+  }
+
   Future<void> command(String text) => action(() => server!.sendCommand(text));
   Future<Map<String, String>> readSettings() async {
     final file = server!.properties;

@@ -35,11 +35,10 @@ class RuntimeService {
             '$home/lib:$home/lib/server:${info['nativeLibraryDir']}',
       }, bootstrap: info['bootstrap']);
     }
-    final os = Platform.isWindows
-        ? 'windows'
-        : Platform.isMacOS
-        ? 'mac'
-        : 'linux';
+    if (!Platform.isWindows) {
+      throw UnsupportedError('HostCraft supports Android and Windows only.');
+    }
+    const os = 'windows';
     final arch = Platform.version.contains('arm64') ? 'aarch64' : 'x64';
     final dest = Directory(p.join(root.path, 'runtimes', '$major-$os-$arch'));
     final marker = File(p.join(dest.path, 'java-path.txt'));
@@ -61,32 +60,14 @@ class RuntimeService {
       checksum: pkg['checksum'],
       label: 'Downloading Java $major',
     );
+    if (await dest.exists()) await dest.delete(recursive: true);
     await dest.create(recursive: true);
     download.onProgress?.call('Extracting Java $major', null);
-    if (Platform.isWindows) {
-      await extractFileToDisk(archive.path, dest.path);
-    } else {
-      final result = await Process.run('tar', [
-        '-xzf',
-        archive.path,
-        '-C',
-        dest.path,
-      ]);
-      if (result.exitCode != 0) {
-        throw ProcessException('tar', [], '${result.stderr}', result.exitCode);
-      }
-    }
+    await extractFileToDisk(archive.path, dest.path);
     final executable = await dest
         .list(recursive: true)
-        .where(
-          (e) =>
-              e is File &&
-              p.basename(e.path) == (Platform.isWindows ? 'java.exe' : 'java'),
-        )
+        .where((e) => e is File && p.basename(e.path) == 'java.exe')
         .first;
-    if (!Platform.isWindows) {
-      await Process.run('chmod', ['+x', executable.path]);
-    }
     await marker.writeAsString(executable.path);
     await archive.delete();
     return JavaRuntime(executable.path, {});

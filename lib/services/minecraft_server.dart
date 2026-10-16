@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import '../core/models.dart';
 import 'background_service.dart';
 import 'download_service.dart';
+import 'process_guard.dart';
 import 'runtime_service.dart';
 
 class MinecraftGameServer extends BaseGameServer {
@@ -152,6 +153,9 @@ class MinecraftGameServer extends BaseGameServer {
     _sampleTime = null;
     onPhase(ServerPhase.starting);
     try {
+      if (!Platform.isAndroid && !Platform.isWindows) {
+        throw StateError('HostCraft supports Android and Windows only.');
+      }
       await BackgroundService.start(profile.name);
       final java = _java!;
       final args = <String>[
@@ -183,6 +187,7 @@ class MinecraftGameServer extends BaseGameServer {
         environment: java.environment,
         runInShell: false,
       );
+      ProcessGuard.adopt(process.pid);
       _process = process;
       void consume(String line) {
         log(line);
@@ -224,7 +229,7 @@ class MinecraftGameServer extends BaseGameServer {
   }
 
   Future<void> _sample(int pid) async {
-    if (!Platform.isAndroid && !Platform.isLinux) return;
+    if (!Platform.isAndroid) return; // Needs /proc; not available on Windows.
     try {
       final stat = await File('/proc/$pid/stat').readAsString();
       final fields = stat.substring(stat.lastIndexOf(')') + 2).split(' ');
@@ -232,11 +237,9 @@ class MinecraftGameServer extends BaseGameServer {
       final now = DateTime.now();
       final status = await File('/proc/$pid/status').readAsString();
       final rss = RegExp(r'VmRSS:\s+(\d+)').firstMatch(status);
-      // Linux USER_HZ is conventionally 100; Android reports its actual value.
-      final hz = Platform.isAndroid
-          ? ((await RuntimeService.androidInfo())['clockTicks'] as num)
-                .toDouble()
-          : 100.0;
+      // Android reports its actual clock tick rate.
+      final hz = ((await RuntimeService.androidInfo())['clockTicks'] as num)
+          .toDouble();
       final cpu = _ticks == null
           ? null
           : (ticks - _ticks!) /
@@ -269,9 +272,9 @@ class MinecraftGameServer extends BaseGameServer {
   }
 
   @override
-  Future<void> stop() =>
-      _stopFuture ??= _stop().whenComplete(() => _stopFuture = null);
-  Future<void> _stop() async {
+  Future<void> stop({Duration grace = const Duration(seconds: 45)}) =>
+      _stopFuture ??= _stop(grace).whenComplete(() => _stopFuture = null);
+  Future<void> _stop(Duration grace) async {
     final process = _process;
     if (process == null) return;
     _stopping = true;
@@ -282,7 +285,7 @@ class MinecraftGameServer extends BaseGameServer {
       process.kill();
     }
     try {
-      await process.exitCode.timeout(const Duration(seconds: 45));
+      await process.exitCode.timeout(grace);
     } on TimeoutException {
       log('Graceful stop timed out. Terminating Java.');
       process.kill();

@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import '../core/app_info.dart';
 import 'download_service.dart';
 import 'playit_api.dart';
+import 'process_guard.dart';
 import 'runtime_service.dart';
 
 enum TunnelPhase { idle, linking, creating, starting, connected, failed }
@@ -35,6 +36,8 @@ class TunnelService {
   int _session = 0;
   String? _executable;
   List<String> _prefix = [];
+  bool _expectAgent = false;
+  final _recent = <String>[];
 
   TunnelPhase phase = TunnelPhase.idle;
   String status = '';
@@ -66,32 +69,24 @@ class TunnelService {
       _prefix = ['--exec', '${info['nativeLibraryDir']}/libplayit.so'];
       return;
     }
-    if (Platform.isMacOS) {
-      throw UnsupportedError(
-        'For macOS, install the Playit agent from playit.gg and configure it for your local server. Automatic agent installation supports Android, Windows and Linux.',
-      );
+    if (!Platform.isWindows) {
+      throw UnsupportedError('HostCraft supports Android and Windows only.');
     }
-    final arm = Platform.version.contains('arm64');
-    final asset = Platform.isWindows
-        ? 'playit-windows-x86_64-signed.exe'
-        : arm
-        ? 'playit-linux-aarch64'
-        : 'playit-linux-amd64';
-    final hash = Platform.isWindows
-        ? '9b00d6ff7d37d1052e5ae097e1348e11deae8617cd7a8ba39d1777f2006316a3'
-        : arm
-        ? 'cd3fa1cedac40a71d80a120e6353e08836308840340b58e659e8f25d00601f66'
-        : 'e78d463d93aa1e3ec36a06ded5a1f4fe879905fdceb865df8f4cef6124f8a555';
-    final file = File(p.join(root.path, 'playit', asset));
+    // Since Playit 1.0 the release named "playit-windows-x86_64-signed.exe" is
+    // the playitd daemon (the thing that actually carries traffic). It also
+    // runs on Windows on ARM through x64 emulation.
+    const asset = 'playit-windows-x86_64-signed.exe';
+    const hash =
+        '2dbdaad119844cbbc062cc9774b8b462afa5f1b4b7832a9fc5ef4676cae887cf';
+    final file = File(p.join(root.path, 'playit', playitAgentVersion, asset));
     if (!await file.exists()) {
       await DownloadService().file(
-        'https://github.com/playit-cloud/playit-agent/releases/download/v0.17.1/$asset',
+        'https://github.com/playit-cloud/playit-agent/releases/download/v$playitAgentVersion/$asset',
         file,
         checksum: hash,
         label: 'Playit agent',
       );
     }
-    if (!Platform.isWindows) await Process.run('chmod', ['+x', file.path]);
     _executable = file.path;
   }
 
@@ -129,9 +124,26 @@ class TunnelService {
     final end = DateTime.now().add(time);
     while (DateTime.now().isBefore(end)) {
       if (cancelled()) throw const _Cancelled();
+      if (_expectAgent && _process == null) throw _agentGone();
       await Future<void>.delayed(const Duration(milliseconds: 250));
     }
     if (cancelled()) throw const _Cancelled();
+    if (_expectAgent && _process == null) throw _agentGone();
+  }
+
+  /// Error shown when the agent process ended while we still needed it.
+  PlayitApiException _agentGone() {
+    String? hint;
+    for (final line in _recent.reversed) {
+      if (line.toLowerCase().contains('error')) {
+        hint = line.length > 180 ? '${line.substring(0, 180)}…' : line;
+        break;
+      }
+    }
+    return PlayitApiException(
+      'The Playit agent stopped before the tunnel was ready.'
+      '${hint == null ? '' : ' Last error: $hint'}',
+    );
   }
 
   Future<String> _ensureSecret(bool Function() cancelled) async {
@@ -172,7 +184,7 @@ class TunnelService {
         }
         var state = '';
         try {
-          state = await api.claimSetup(code, version: 'hostcraft $appVersion');
+          state = await api.claimSetup(code, version: 'playit-agent $playitAgentVersion');
         } on PlayitApiException catch (e) {
           if (e.code == 'CodeExpired' || e.code == 'InvalidCode') rethrow;
           await _wait(const Duration(seconds: 3), cancelled);
@@ -247,7 +259,7 @@ class TunnelService {
     }
   }
 
-  Future<PlayitTunnel> _ensureTunnel(
+    Future<PlayitTunnel> _ensureTunnel(
     PlayitApi api,
     int port,
     bool Function() cancelled,
@@ -257,7 +269,18 @@ class TunnelService {
     if (tunnel == null) {
       onLog('Creating a Minecraft tunnel for port $port on Playit…');
       _set(TunnelPhase.creating, 'Creating your Minecraft tunnel…');
-      await api.createMinecraftTunnel(agentId: data.agentId, localPort: port);
+      for (var i = 0;; i++) {
+        try {
+          await api.createMinecraftTunnel(agentId: data.agentId, localPort: port);
+          break;
+        } on PlayitApiException catch (e) {
+          // The agent may still be registering with Playit. Wait and retry.
+          if ((e.code != 'AgentVersionTooOld' && !e.network) || i >= 15) rethrow;
+          await _wait(const Duration(seconds: 2), cancelled);
+          if (cancelled()) throw const _Cancelled();
+          data = await api.agentRunData();
+        }
+      }
       for (var attempt = 0; attempt < 30; attempt++) {
         await _wait(const Duration(seconds: 1), cancelled);
         data = await api.agentRunData();
@@ -290,7 +313,7 @@ class TunnelService {
     );
   }
 
-  Future<void> start() async {
+    Future<void> start() async {
     if (running || busy) return;
     final session = ++_session;
     bool cancelled() => session != _session;
@@ -307,23 +330,42 @@ class TunnelService {
       final secret = await _ensureSecret(cancelled);
       if (cancelled()) return;
       api = PlayitApi(secret: secret);
-      _set(TunnelPhase.creating, 'Preparing your Minecraft tunnel…');
-      final tunnel = await _ensureTunnel(api, port, cancelled);
-      if (cancelled()) return;
-      address = await _addressFor(api, tunnel);
-      if (cancelled()) return;
+
+      // The agent must connect first, otherwise Playit rejects tunnel
+      // creation with AgentVersionTooOld.
       _set(TunnelPhase.starting, 'Starting the Playit agent…');
       await _startAgent();
+      _expectAgent = true;
+      // Catches an agent that crashes immediately (bad flags, blocked, etc.)
+      // instead of waiting for the tunnel polls to time out.
+      await _wait(const Duration(seconds: 2), cancelled);
       if (cancelled()) {
         await _killAgent();
+        api.close();
         return;
       }
+
+      _set(TunnelPhase.creating, 'Preparing your Minecraft tunnel…');
+      final tunnel = await _ensureTunnel(api, port, cancelled);
+      if (cancelled()) {
+        await _killAgent();
+        api.close();
+        return;
+      }
+      address = await _addressFor(api, tunnel);
+      if (cancelled()) {
+        await _killAgent();
+        api.close();
+        return;
+      }
+
       _api?.close();
       _api = api;
       _set(TunnelPhase.connected, 'Connected');
       _startRefresh(api, session);
     } on _Cancelled {
       api?.close();
+      await _killAgent();
       return;
     } catch (e) {
       api?.close();
@@ -336,13 +378,44 @@ class TunnelService {
     }
   }
 
+  /// Where the daemon listens for its (unused) local control channel. It is
+  /// private to HostCraft so it never clashes with a Playit service the user
+  /// may have installed separately.
+  String get _socketPath => Platform.isWindows
+      ? r'\\.\pipe\hostcraft-playitd'
+      : p.join(p.dirname(secretPath), 'playitd.sock');
+
   Future<void> _startAgent() async {
+    _recent.clear();
+    if (!Platform.isWindows) {
+      try {
+        final stale = File(_socketPath);
+        if (await stale.exists()) await stale.delete();
+      } catch (_) {}
+    }
+    // Playit 1.0 replaced the old `playit --secret_path X start` agent with the
+    // playitd daemon, which takes hyphenated flags and starts by itself. The
+    // `playit-cli` front-end only talks to an installed service, so it can
+    // never be used to carry traffic from inside the app.
     final process = await Process.start(
       _executable!,
-      [..._prefix, '--secret_path', secretPath, '--stdout', 'start'],
+      [
+        ..._prefix,
+        '--secret-path',
+        secretPath,
+        '--socket-path',
+        _socketPath,
+      ],
       workingDirectory: p.dirname(secretPath),
-      environment: {'HOME': root.path, 'RUST_LOG': 'info', 'NO_COLOR': '1'},
+      environment: {
+        'HOME': root.path,
+        'RUST_LOG': 'info',
+        'PLAYIT_LOG': 'info',
+        'NO_COLOR': '1',
+      },
+      runInShell: false,
     );
+    ProcessGuard.adopt(process.pid);
     _process = process;
     final out = process.stdout
         .transform(const Utf8Decoder(allowMalformed: true))
@@ -360,9 +433,14 @@ class TunnelService {
         _process = null;
         _refresh?.cancel();
         onLog('Agent exited with code $code');
-        if (phase == TunnelPhase.connected || phase == TunnelPhase.starting) {
+        if (phase == TunnelPhase.connected ||
+            phase == TunnelPhase.starting ||
+            phase == TunnelPhase.creating) {
           address = null;
-          error = 'The Playit agent stopped unexpectedly (exit code $code).';
+          error = _agentGone().message.replaceFirst(
+            'before the tunnel was ready',
+            'unexpectedly (exit code $code)',
+          );
           _set(TunnelPhase.failed, '');
         } else {
           onChange();
@@ -374,6 +452,8 @@ class TunnelService {
   void _agentLine(String value) {
     final clean = value.replaceAll(RegExp(r'\x1B\[[0-?]*[ -/]*[@-~]'), '');
     onLog(clean);
+    _recent.add(clean);
+    if (_recent.length > 20) _recent.removeAt(0);
     final problem = detectProblem(clean);
     if (problem != null && warning != problem) {
       warning = problem;
@@ -415,6 +495,7 @@ class TunnelService {
   }
 
   Future<void> _killAgent() async {
+    _expectAgent = false;
     final process = _process;
     if (process == null) return;
     _process = null;

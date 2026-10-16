@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'runtime_service.dart';
 
 /// Reads facts about the device HostCraft runs on, mainly installed RAM.
+/// Supported platforms: Android and Windows.
 class DeviceService {
   static const memoryStepMb = 256;
   static const minMemoryMb = 512;
@@ -18,16 +19,6 @@ class DeviceService {
         final info = await RuntimeService.androidInfo();
         final value = info['totalMemMb'];
         return value is num && value > 0 ? value.round() : null;
-      }
-      if (Platform.isLinux) {
-        final text = await File('/proc/meminfo').readAsString();
-        final match = RegExp(r'MemTotal:\s+(\d+)\s*kB').firstMatch(text);
-        return match == null ? null : int.parse(match[1]!) ~/ 1024;
-      }
-      if (Platform.isMacOS) {
-        final result = await Process.run('sysctl', ['-n', 'hw.memsize']);
-        final bytes = int.tryParse('${result.stdout}'.trim());
-        return bytes == null ? null : bytes ~/ (1024 * 1024);
       }
       if (Platform.isWindows) {
         final result = await Process.run('powershell', [
@@ -52,7 +43,7 @@ class DeviceService {
       math.max(minMemoryMb, roundDownToStep(totalMb));
 
   /// Heap that normally leaves the system enough room to keep running:
-  /// about half the RAM on phones, three quarters on computers.
+  /// about half the RAM on phones, three quarters on Windows PCs.
   static int recommendedHeapMb(int totalMb) {
     final share = Platform.isAndroid ? 0.5 : 0.75;
     final value = roundDownToStep((totalMb * share).floor());
