@@ -39,31 +39,31 @@ class HostColors extends ThemeExtension<HostColors> {
   final Color consoleLineNumber;
 
   static const dark = HostColors(
-    background: Color(0xff0e1311),
-    surface: Color(0xff161d1a),
-    surfaceAlt: Color(0xff1e2824),
-    border: Color(0xff26332d),
-    text: Color(0xffe8efeb),
-    muted: Color(0xff8e9d96),
-    accent: Color(0xff5bdb9b),
-    onAccent: Color(0xff06130c),
-    accentSoft: Color(0xff1f3a2d),
+    background: Color(0xff0c1117),
+    surface: Color(0xff141c25),
+    surfaceAlt: Color(0xff1c2733),
+    border: Color(0xff293644),
+    text: Color(0xffedf4f8),
+    muted: Color(0xff9baebe),
+    accent: Color(0xff86edb0),
+    onAccent: Color(0xff092318),
+    accentSoft: Color(0xff203e33),
     warning: Color(0xffe9c46a),
     danger: Color(0xffff8a80),
     info: Color(0xff8ec5ff),
-    consoleBackground: Color(0xff0a0f0d),
-    consoleText: Color(0xffc3dccb),
-    consoleLineNumber: Color(0xff56685e),
+    consoleBackground: Color(0xff0a1016),
+    consoleText: Color(0xffd5e6ee),
+    consoleLineNumber: Color(0xff708796),
   );
 
   static const light = HostColors(
-    background: Color(0xfff3f6f4),
+    background: Color(0xfff0f4f7),
     surface: Color(0xffffffff),
-    surfaceAlt: Color(0xffebf1ed),
-    border: Color(0xffd9e2dd),
-    text: Color(0xff14201a),
-    muted: Color(0xff5d6d65),
-    accent: Color(0xff12804e),
+    surfaceAlt: Color(0xffe8eff3),
+    border: Color(0xffd7e1e8),
+    text: Color(0xff172b38),
+    muted: Color(0xff526a7b),
+    accent: Color(0xff14784b),
     onAccent: Color(0xffffffff),
     accentSoft: Color(0xffd5ecdf),
     warning: Color(0xff8a5a00),
@@ -102,47 +102,67 @@ class HostColors extends ThemeExtension<HostColors> {
 }
 
 extension HostColorsContext on BuildContext {
-  HostColors get hc => Theme.of(this).extension<HostColors>() ?? HostColors.dark;
+  HostColors get hc =>
+      Theme.of(this).extension<HostColors>() ?? HostColors.dark;
 }
 
-/// Flat design: solid tonal surfaces, hairline borders, no elevation,
-/// gradients or shadows anywhere.
+/// Shared desktop and mobile tokens for HostCraft's control room.
 ThemeData buildTheme(Brightness brightness) {
   final dark = brightness == Brightness.dark;
   final c = dark ? HostColors.dark : HostColors.light;
-  final scheme = ColorScheme.fromSeed(
-    seedColor: c.accent,
-    brightness: brightness,
-  ).copyWith(
-    primary: c.accent,
-    onPrimary: c.onAccent,
-    secondary: c.accent,
-    onSecondary: c.onAccent,
-    secondaryContainer: c.accentSoft,
-    onSecondaryContainer: c.text,
-    surface: c.surface,
-    onSurface: c.text,
-    onSurfaceVariant: c.muted,
-    surfaceContainerHighest: c.surfaceAlt,
-    outline: c.border,
-    outlineVariant: c.border,
-    error: c.danger,
-  );
+  final scheme =
+      ColorScheme.fromSeed(
+        seedColor: c.accent,
+        brightness: brightness,
+      ).copyWith(
+        primary: c.accent,
+        onPrimary: c.onAccent,
+        secondary: c.accent,
+        onSecondary: c.onAccent,
+        secondaryContainer: c.accentSoft,
+        onSecondaryContainer: c.text,
+        surface: c.surface,
+        onSurface: c.text,
+        onSurfaceVariant: c.muted,
+        surfaceContainerHighest: c.surfaceAlt,
+        outline: c.border,
+        outlineVariant: c.border,
+        error: c.danger,
+      );
   final shape = RoundedRectangleBorder(borderRadius: BorderRadius.circular(12));
-  OutlineInputBorder field(Color color, [double width = 1]) => OutlineInputBorder(
-    borderRadius: BorderRadius.circular(12),
-    borderSide: width == 0
-        ? BorderSide.none
-        : BorderSide(color: color, width: width),
-  );
+  OutlineInputBorder field(Color color, [double width = 1]) =>
+      OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: width == 0
+            ? BorderSide.none
+            : BorderSide(color: color, width: width),
+      );
   return ThemeData(
     useMaterial3: true,
+    fontFamily: 'Manrope',
+    textTheme: ThemeData(brightness: brightness).textTheme
+        .apply(bodyColor: c.text, displayColor: c.text, fontFamily: 'Manrope'),
     brightness: brightness,
     colorScheme: scheme,
     scaffoldBackgroundColor: c.background,
     canvasColor: c.background,
     splashFactory: InkRipple.splashFactory,
     extensions: [c],
+    chipTheme: ChipThemeData(
+      backgroundColor: c.surface,
+      selectedColor: c.accentSoft,
+      disabledColor: c.surfaceAlt,
+      labelStyle: TextStyle(
+        fontFamily: 'Manrope',
+        fontSize: 12,
+        fontWeight: FontWeight.w600,
+        color: c.text,
+      ),
+      side: BorderSide(color: c.border),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      showCheckmark: false,
+    ),
     dividerTheme: DividerThemeData(color: c.border, thickness: 1, space: 1),
     appBarTheme: AppBarTheme(
       backgroundColor: c.background,
@@ -157,8 +177,15 @@ ThemeData buildTheme(Brightness brightness) {
       margin: EdgeInsets.zero,
       surfaceTintColor: Colors.transparent,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(18),
         side: BorderSide(color: c.border),
+      ),
+    ),
+    bottomSheetTheme: BottomSheetThemeData(
+      backgroundColor: c.background,
+      surfaceTintColor: Colors.transparent,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
     ),
     dialogTheme: DialogThemeData(
@@ -173,6 +200,7 @@ ThemeData buildTheme(Brightness brightness) {
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: c.surfaceAlt,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
       border: field(c.border, 0),
       enabledBorder: field(c.border, 0),
       disabledBorder: field(c.border, 0),
@@ -189,7 +217,10 @@ ThemeData buildTheme(Brightness brightness) {
         elevation: 0,
         minimumSize: const Size(0, 48),
         shape: shape,
-        textStyle: const TextStyle(fontWeight: FontWeight.w700),
+        textStyle: const TextStyle(
+          fontFamily: 'Manrope',
+          fontWeight: FontWeight.w700,
+        ),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
@@ -199,14 +230,20 @@ ThemeData buildTheme(Brightness brightness) {
         minimumSize: const Size(0, 48),
         side: BorderSide(color: c.border),
         shape: shape,
-        textStyle: const TextStyle(fontWeight: FontWeight.w600),
+        textStyle: const TextStyle(
+          fontFamily: 'Manrope',
+          fontWeight: FontWeight.w600,
+        ),
       ),
     ),
     textButtonTheme: TextButtonThemeData(
       style: TextButton.styleFrom(
         foregroundColor: c.accent,
         shape: shape,
-        textStyle: const TextStyle(fontWeight: FontWeight.w600),
+        textStyle: const TextStyle(
+          fontFamily: 'Manrope',
+          fontWeight: FontWeight.w600,
+        ),
       ),
     ),
     iconButtonTheme: IconButtonThemeData(
@@ -221,8 +258,23 @@ ThemeData buildTheme(Brightness brightness) {
       labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
     ),
     navigationRailTheme: NavigationRailThemeData(
-      backgroundColor: c.background,
+      backgroundColor: c.surface,
       indicatorColor: c.accentSoft,
+      indicatorShape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      selectedIconTheme: IconThemeData(color: c.accent, size: 21),
+      unselectedIconTheme: IconThemeData(color: c.muted, size: 21),
+      selectedLabelTextStyle: TextStyle(
+        fontFamily: 'Manrope',
+        color: c.accent,
+        fontWeight: FontWeight.w700,
+      ),
+      unselectedLabelTextStyle: TextStyle(
+        fontFamily: 'Manrope',
+        color: c.muted,
+        fontWeight: FontWeight.w500,
+      ),
       elevation: 0,
     ),
     sliderTheme: SliderThemeData(
@@ -242,6 +294,17 @@ ThemeData buildTheme(Brightness brightness) {
     segmentedButtonTheme: SegmentedButtonThemeData(
       style: SegmentedButton.styleFrom(
         elevation: 0,
+        backgroundColor: c.surface,
+        foregroundColor: c.muted,
+        selectedBackgroundColor: c.accentSoft,
+        selectedForegroundColor: c.accent,
+        textStyle: const TextStyle(
+          fontFamily: 'Manrope',
+          fontWeight: FontWeight.w700,
+          fontSize: 12,
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         side: BorderSide(color: c.border),
       ),
     ),

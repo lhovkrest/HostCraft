@@ -13,9 +13,8 @@ class NetworkScreen extends StatelessWidget {
   Future<void> _copy(BuildContext context, String text, String message) async {
     await Clipboard.setData(ClipboardData(text: text));
     if (context.mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
     }
   }
 
@@ -42,8 +41,7 @@ class NetworkScreen extends StatelessWidget {
         host.active
             ? 'Connect once and HostCraft sets everything up with Playit. Friends can then join from anywhere.'
             : 'Start your Minecraft server first, then connect. HostCraft creates the Playit tunnel for you.',
-      TunnelPhase.connected =>
-        'Your tunnel is live. Share the public address below with your friends.',
+      TunnelPhase.connected => 'Your tunnel is live. Share the public address below with your friends.',
       TunnelPhase.failed =>
         'The connection did not finish. Fix the problem below and try again.',
       _ => tunnel?.status ?? '',
@@ -67,7 +65,10 @@ class NetworkScreen extends StatelessWidget {
                   const Expanded(
                     child: Text(
                       'Playit tunnel',
-                      style: TextStyle(fontSize: 19, fontWeight: FontWeight.w700),
+                      style: TextStyle(
+                        fontSize: 19,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                   StatusPill(pillLabel, pillColor),
@@ -83,8 +84,7 @@ class NetworkScreen extends StatelessWidget {
                 Notice(
                   icon: Icons.link,
                   color: c.info,
-                  text:
-                      'Playit needs your OK once. Open the link, sign in to Playit and approve HostCraft. This screen carries on by itself afterwards.',
+                  text: 'Playit needs your OK once. Open the link, sign in to Playit and approve HostCraft. This screen carries on by itself afterwards.',
                   action: Wrap(
                     spacing: 8,
                     runSpacing: 8,
@@ -109,8 +109,7 @@ class NetworkScreen extends StatelessWidget {
                   color: c.danger,
                   text: tunnel!.error!,
                 ),
-              if (tunnel?.warning != null)
-                Notice(text: tunnel!.warning!),
+              if (tunnel?.warning != null) Notice(text: tunnel!.warning!),
               if (busy) ...[
                 LinearProgressIndicator(color: c.accent, minHeight: 3),
                 const SizedBox(height: 16),
@@ -149,7 +148,7 @@ class NetworkScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Eyebrow('Public address'),
+              const Eyebrow('Java · TCP'),
               const SizedBox(height: 12),
               SelectableText(
                 address ?? 'Not connected yet',
@@ -162,12 +161,36 @@ class NetworkScreen extends StatelessWidget {
               const SizedBox(height: 12),
               if (address != null)
                 OutlinedButton.icon(
-                  onPressed: () =>
-                      _copy(context, address, 'Address copied'),
+                  onPressed: () => _copy(context, address, 'Address copied'),
                   icon: const Icon(Icons.copy, size: 16),
                   label: const Text('Copy address'),
                 ),
               if (address != null) const SizedBox(height: 12),
+              if (tunnel?.bedrockAddress != null) ...[
+                const Divider(height: 28),
+                const Eyebrow('Bedrock · UDP'),
+                const SizedBox(height: 12),
+                SelectableText(
+                  tunnel!.bedrockAddress!,
+                  style: TextStyle(
+                    color: c.accent,
+                    fontFamily: 'monospace',
+                    fontSize: 20,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () => _copy(
+                    context,
+                    tunnel.bedrockAddress!,
+                    'Bedrock address copied',
+                  ),
+                  icon: const Icon(Icons.copy, size: 16),
+                  label: const Text('Copy Bedrock address'),
+                ),
+              ],
+              if (tunnel?.bedrockNote != null)
+                Notice(text: tunnel!.bedrockNote!),
               Text(
                 'Connected means the agent is running and the tunnel exists on Playit. Try joining from another network to confirm it works end to end.',
                 style: TextStyle(color: c.muted, fontSize: 12.5, height: 1.5),
@@ -184,20 +207,17 @@ class NetworkScreen extends StatelessWidget {
               const StepTile(
                 number: '1',
                 title: 'Approve once',
-                body:
-                    'The first connection opens a Playit link. Approve HostCraft there. The link is remembered on this device.',
+                body: 'The first connection opens a Playit link. Approve HostCraft there. The link is remembered on this device.',
               ),
               const StepTile(
                 number: '2',
                 title: 'Tunnel created for you',
-                body:
-                    'HostCraft asks Playit for a Minecraft Java tunnel that points at 127.0.0.1 and your server port. No dashboard setup is needed.',
+                body: 'HostCraft asks Playit for a Minecraft Java tunnel that points at 127.0.0.1 and your server port. No dashboard setup is needed.',
               ),
               const StepTile(
                 number: '3',
                 title: 'Share the address',
-                body:
-                    'Friends enter the public address in Minecraft Java Edition.',
+                body: 'Friends enter the public address in Minecraft Java Edition.',
               ),
               Wrap(
                 spacing: 8,

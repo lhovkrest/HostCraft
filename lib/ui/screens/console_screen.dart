@@ -3,7 +3,9 @@ import 'package:flutter/services.dart';
 
 import '../../core/host_controller.dart';
 import '../../core/models.dart';
+import '../../core/progress.dart';
 import '../theme.dart';
+import '../widgets.dart';
 
 class ConsoleScreen extends StatefulWidget {
   const ConsoleScreen({super.key, required this.host});
@@ -17,6 +19,8 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
   final scroll = ScrollController();
   bool follow = true;
   String filter = 'all';
+  String query = '';
+  bool searching = false;
   @override
   void dispose() {
     command.dispose();
@@ -29,7 +33,11 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
     final host = widget.host;
     final c = context.hc;
     final logs = host.logs
-        .where((l) => filter == 'all' || l.source == filter)
+        .where(
+          (l) =>
+              (filter == 'all' || l.source == filter) &&
+              l.text.toLowerCase().contains(query.toLowerCase()),
+        )
         .toList();
     if (follow) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -39,7 +47,12 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
       });
     }
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      padding: EdgeInsets.fromLTRB(
+        MediaQuery.sizeOf(context).width > 850 ? 32 : 20,
+        24,
+        MediaQuery.sizeOf(context).width > 850 ? 32 : 20,
+        20,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -50,6 +63,14 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
                   'Live console',
                   style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
                 ),
+              ),
+              IconButton(
+                tooltip: 'Search logs',
+                onPressed: () => setState(() {
+                  searching = !searching;
+                  if (!searching) query = '';
+                }),
+                icon: const Icon(Icons.search),
               ),
               IconButton(
                 tooltip: 'Copy visible logs',
@@ -74,6 +95,17 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
               ),
             ],
           ),
+          Text(
+            'A direct line to your world.',
+            style: TextStyle(color: c.muted, fontSize: 13),
+          ),
+          const SizedBox(height: 12),
+          if (searching)
+            TextField(
+              autofocus: true,
+              decoration: const InputDecoration(hintText: 'Search output...'),
+              onChanged: (v) => setState(() => query = v),
+            ),
           Row(
             children: [
               DropdownButton<String>(
@@ -98,64 +130,137 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
               ),
             ],
           ),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final shortcut in ['stop', 'help', 'list', 'op'])
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8, bottom: 12),
+                    child: OutlinedButton.icon(
+                      style: shortcut == 'stop'
+                          ? OutlinedButton.styleFrom(foregroundColor: c.danger)
+                          : null,
+                      onPressed:
+                          !host.active ||
+                              host.working ||
+                              host.phase == ServerPhase.stopping
+                          ? null
+                          : () {
+                              if (shortcut == 'stop') {
+                                host.stop();
+                              } else if (shortcut == 'op') {
+                                command.text = 'op ';
+                                command.selection = TextSelection.collapsed(
+                                  offset: command.text.length,
+                                );
+                              } else {
+                                host.command(shortcut);
+                              }
+                            },
+                      icon: Icon(
+                        shortcut == 'stop'
+                            ? Icons.close
+                            : shortcut == 'op'
+                            ? Icons.shield_outlined
+                            : Icons.terminal,
+                        size: 18,
+                      ),
+                      label: Text('/$shortcut'),
+                    ),
+                  ),
+              ],
+            ),
+          ),
           const SizedBox(height: 4),
           Expanded(
             child: Container(
               width: double.infinity,
+              clipBehavior: Clip.antiAlias,
               decoration: BoxDecoration(
                 color: c.consoleBackground,
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(color: c.border),
               ),
-              child: logs.isEmpty
-                  ? Center(
-                      child: Text(
-                        'Server output will appear here.',
-                        style: TextStyle(color: c.muted),
-                      ),
-                    )
-                  : ListView.builder(
-                      controller: scroll,
-                      padding: const EdgeInsets.all(12),
-                      itemCount: logs.length,
-                      itemBuilder: (context, i) {
-                        final l = logs[i];
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 3),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              SizedBox(
-                                width: 30,
-                                child: Text(
-                                  '${i + 1}',
-                                  style: TextStyle(
-                                    fontFamily: 'monospace',
-                                    fontSize: 10,
-                                    color: c.consoleLineNumber,
-                                  ),
+              child: Column(
+                children: [
+                  ValueListenableBuilder<DownloadProgress?>(
+                    valueListenable: host.download,
+                    builder: (context, progress, _) => progress == null
+                        ? const SizedBox.shrink()
+                        : DownloadStrip(progress: progress),
+                  ),
+                  Expanded(
+                    child: logs.isEmpty
+                        ? Center(
+                            child: Text(
+                              'Server output will appear here.',
+                              style: TextStyle(color: c.muted),
+                            ),
+                          )
+                        : ListView.builder(
+                            controller: scroll,
+                            padding: const EdgeInsets.all(12),
+                            itemCount: logs.length,
+                            itemBuilder: (context, i) {
+                              final l = logs[i];
+                              return Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                  horizontal: 4,
                                 ),
-                              ),
-                              Expanded(
-                                child: SelectableText(
-                                  '${l.timestamp}  ${l.text}',
-                                  style: TextStyle(
-                                    fontFamily: 'monospace',
-                                    fontSize: 11.5,
-                                    height: 1.5,
-                                    color: l.source == 'error'
-                                        ? c.danger
-                                        : l.source == 'playit'
-                                        ? c.info
-                                        : c.consoleText,
-                                  ),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Icon(
+                                      l.source == 'error'
+                                          ? Icons.error_outline
+                                          : Icons.chat_bubble_outline,
+                                      size: 20,
+                                      color: l.source == 'error'
+                                          ? c.danger
+                                          : c.muted,
+                                    ),
+                                    const SizedBox(width: 14),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            '${l.timestamp}  ${l.source.toUpperCase()}',
+                                            style: TextStyle(
+                                              color: c.muted,
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w700,
+                                              letterSpacing: .8,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 6),
+                                          SelectableText(
+                                            l.text,
+                                            style: TextStyle(
+                                              fontFamily: 'monospace',
+                                              fontSize: 13,
+                                              height: 1.55,
+                                              color: l.source == 'error'
+                                                  ? c.danger
+                                                  : l.source == 'playit'
+                                                  ? c.info
+                                                  : c.consoleText,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                              ),
-                            ],
+                              );
+                            },
                           ),
-                        );
-                      },
-                    ),
+                  ),
+                ],
+              ),
             ),
           ),
           const SizedBox(height: 12),
@@ -171,7 +276,7 @@ class _ConsoleScreenState extends State<ConsoleScreen> {
               suffixIcon: IconButton(
                 tooltip: 'Send command',
                 onPressed: host.active && !host.working ? _send : null,
-                icon: const Icon(Icons.arrow_upward_rounded),
+                icon: const Icon(Icons.send_rounded),
               ),
             ),
             onSubmitted: (_) => _send(),

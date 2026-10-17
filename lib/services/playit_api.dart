@@ -48,12 +48,16 @@ class PlayitTunnel {
   final bool disabled;
 
   bool get carriesTcp => protocol == 'tcp' || protocol == 'both';
-  bool get ready => assignedDomain.isNotEmpty || (customDomain ?? '').isNotEmpty;
+  bool get carriesUdp => protocol == 'udp' || protocol == 'both';
+  bool get ready =>
+      assignedDomain.isNotEmpty || (customDomain ?? '').isNotEmpty;
 
   /// Address players type into Minecraft, built from the API fields. Used only
   /// when Playit's own `display_address` is not available.
   String get fallbackAddress {
-    final domain = (customDomain ?? '').isNotEmpty ? customDomain! : assignedDomain;
+    final domain = (customDomain ?? '').isNotEmpty
+        ? customDomain!
+        : assignedDomain;
     return publicPort > 0 ? '$domain:$publicPort' : domain;
   }
 
@@ -95,8 +99,11 @@ class PlayitRunData {
 /// carries game traffic; this client only manages the account side so
 /// HostCraft never has to scrape the agent's log output.
 class PlayitApi {
-  PlayitApi({this.secret, http.Client? client, this.base = 'https://api.playit.gg'})
-    : _client = client ?? http.Client();
+  PlayitApi({
+    this.secret,
+    http.Client? client,
+    this.base = 'https://api.playit.gg',
+  }) : _client = client ?? http.Client();
   final String? secret;
   final String base;
   final http.Client _client;
@@ -153,7 +160,8 @@ class PlayitApi {
     final status = json['status'];
     final data = json['data'];
     if (status == 'success') return data;
-    final isAuth = response.statusCode == 401 ||
+    final isAuth =
+        response.statusCode == 401 ||
         (status == 'error' && data is Map && data['type'] == 'auth');
     if (isAuth) {
       throw PlayitApiException(
@@ -172,21 +180,22 @@ class PlayitApi {
         code: '${data['type']}',
       );
     }
-    throw PlayitApiException('Playit answered with HTTP ${response.statusCode}.');
+    throw PlayitApiException(
+      'Playit answered with HTTP ${response.statusCode}.',
+    );
   }
 
   static String _describe(String code) => switch (code) {
-    'InvalidCode' => 'Playit did not accept the link code. Try connecting again.',
-    'CodeExpired' => 'The approval link expired. Connect again to get a new one.',
+    'InvalidCode' =>
+      'Playit did not accept the link code. Try connecting again.',
+    'CodeExpired' =>
+      'The approval link expired. Connect again to get a new one.',
     'CodeNotFound' => 'Playit could not find the approval link. Connect again.',
     'UserRejected' => 'The link was declined in Playit.',
-    'RequiresVerifiedAccount' =>
-      'Your Playit account needs a verified email before it can create tunnels. Finish signing up at playit.gg, then connect again.',
-    'RequiresPlayitPremium' =>
-      'Playit says this tunnel needs Playit Premium (the free tunnel limit may be used up). Remove an unused tunnel at playit.gg or upgrade.',
+    'RequiresVerifiedAccount' => 'Your Playit account needs a verified email before it can create tunnels. Finish signing up at playit.gg, then connect again.',
+    'RequiresPlayitPremium' => 'Playit says this tunnel needs Playit Premium (the free tunnel limit may be used up). Remove an unused tunnel at playit.gg or upgrade.',
     'InvalidPortCount' => 'Playit rejected the tunnel port count.',
-    'AgentNotFound' || 'InvalidAgentId' =>
-      'Playit does not know this agent any more. Unlink Playit and connect again.',
+    'AgentNotFound' || 'InvalidAgentId' => 'Playit does not know this agent any more. Unlink Playit and connect again.',
     'AgentVersionTooOld' => 'This Playit agent version is too old for the API.',
     'DefaultAgentNotSupported' =>
       'Playit does not allow creating tunnels for this kind of agent.',
@@ -260,18 +269,23 @@ class PlayitApi {
     }
   }
 
-  /// `/tunnels/create`: a TCP Minecraft Java tunnel that forwards to
-  /// [localIp]:[localPort] through the agent [agentId]. Returns the tunnel id.
-  Future<String> createMinecraftTunnel({
+  /// `/tunnels/create`: a tunnel that forwards to [localIp]:[localPort]
+  /// through the agent [agentId]. Returns the tunnel id.
+  ///
+  /// Minecraft Java uses `minecraft-java` over `tcp`; Bedrock (Geyser) uses
+  /// `minecraft-bedrock` over `udp`.
+  Future<String> createTunnel({
     required String agentId,
     required int localPort,
+    String tunnelType = 'minecraft-java',
+    String portType = 'tcp',
     String localIp = '127.0.0.1',
     String name = 'HostCraft',
   }) async {
     final data = await _post('/tunnels/create', {
       'name': name,
-      'tunnel_type': 'minecraft-java',
-      'port_type': 'tcp',
+      'tunnel_type': tunnelType,
+      'port_type': portType,
       'port_count': 1,
       'origin': {
         'type': 'agent',
@@ -286,5 +300,17 @@ class PlayitApi {
     if (data is Map && data['id'] != null) return '${data['id']}';
     throw const PlayitApiException('Playit did not confirm the new tunnel.');
   }
-}
 
+  /// A TCP Minecraft Java tunnel.
+  Future<String> createMinecraftTunnel({
+    required String agentId,
+    required int localPort,
+    String localIp = '127.0.0.1',
+    String name = 'HostCraft',
+  }) => createTunnel(
+    agentId: agentId,
+    localPort: localPort,
+    localIp: localIp,
+    name: name,
+  );
+}

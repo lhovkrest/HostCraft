@@ -5,10 +5,15 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import '../core/models.dart';
+import '../core/progress.dart';
+import '../core/world_config.dart';
 import 'background_service.dart';
+import 'crossplay_service.dart';
 import 'download_service.dart';
 import 'process_guard.dart';
 import 'runtime_service.dart';
+import 'server_catalog.dart';
+import 'forge_service.dart';
 
 class MinecraftGameServer extends BaseGameServer {
   MinecraftGameServer({
@@ -17,6 +22,7 @@ class MinecraftGameServer extends BaseGameServer {
     required this.onPhase,
     required this.onProgress,
     required this.onMetrics,
+    this.onDownload,
     JavaRuntime? runtime,
   }) : _java = runtime;
   final ServerProfile profile;
@@ -24,6 +30,7 @@ class MinecraftGameServer extends BaseGameServer {
   final void Function(ServerPhase) onPhase;
   final void Function(String, double?) onProgress;
   final void Function(double?, double?) onMetrics;
+  final void Function(DownloadProgress)? onDownload;
   final _console = StreamController<String>.broadcast();
   Process? _process;
   JavaRuntime? _java;
@@ -45,13 +52,32 @@ class MinecraftGameServer extends BaseGameServer {
   void log(String line) => _console.add(line);
   File get properties => File(p.join(directory.path, 'server.properties'));
 
+  Future<bool> isPrepared() async => profile.engine == ServerEngine.forge
+      ? await ForgeService.launchFile(directory) != null
+      : await File(p.join(directory.path, 'server.jar')).exists();
+
   @override
-  Future<void> prepare() async {
+  Future<void> prepare({bool force = false}) async {
     if (_busy || _process != null) {
       throw StateError('A server operation is already in progress');
     }
     if (!profile.eulaAccepted) {
       throw StateError('Accept the Minecraft EULA before preparing a server');
+    }
+    if (profile.engine == ServerEngine.forge && !Platform.isWindows) {
+      throw UnsupportedError(
+        'Forge hosting currently requires Windows. Choose Fabric or Paper on Android.',
+      );
+    }
+    if (profile.crossplay && !profile.engine.crossplayCapable) {
+      throw StateError(
+        'Bedrock crossplay is not available on ${profile.engine.label}. Use Paper, Purpur or Fabric, or turn crossplay off.',
+      );
+    }
+    if (profile.engine.needsContact && profile.contact.trim().isEmpty) {
+      throw StateError(
+        '${profile.engine.label} requires a contact URL or email. Add it in server setup, or choose another server type.',
+      );
     }
     _busy = true;
     onPhase(ServerPhase.preparing);
@@ -59,76 +85,79 @@ class MinecraftGameServer extends BaseGameServer {
       await directory.create(recursive: true);
       final download = DownloadService(
         onProgress: onProgress,
+        onDetail: onDownload,
+        onNote: log,
         contact: profile.contact,
       );
-      _java = await RuntimeService(root, download).ensure();
-      final jar = File(p.join(directory.path, 'server.jar'));
-      final receipt = File(p.join(directory.path, 'download.json'));
-      if (!await jar.exists() || !await receipt.exists()) {
-        log(
-          'Resolving ${profile.engine.name} ${profile.version} from the official download service…',
+      final catalog = ServerCatalog(download);
+      // Mojang publishes the Java version each Minecraft version needs
+      // (Java 25 from 26.1 on). Anything older than 21 also runs on 21.
+      final needed = await catalog.javaMajor(profile.version);
+      _java = await RuntimeService(root, download).ensure(
+        major: profile.engine == ServerEngine.forge
+            ? needed
+            : (needed < 21 ? 21 : needed),
+      );
+      if (profile.engine == ServerEngine.forge) {
+        await ForgeService.install(
+          directory: directory,
+          minecraftVersion: profile.version,
+          java: _java!,
+          download: download,
+          catalog: catalog,
+          log: log,
+          force: force,
         );
-        late String url;
-        late String hash;
-        var useSha1 = false;
-        if (profile.engine == ServerEngine.paper) {
-          if (profile.contact.trim().isEmpty) {
-            throw StateError(
-              'Paper requires a contact URL or email. Add it in server setup, or choose Vanilla.',
+      } else {
+        final jar = File(p.join(directory.path, 'server.jar'));
+        final receipt = File(p.join(directory.path, 'download.json'));
+        if (force || !await jar.exists() || !await receipt.exists()) {
+          log(
+            'Resolving ${profile.engine.label} ${profile.version} from the official download service…',
+          );
+          final build = await catalog.resolve(profile.engine, profile.version);
+          if (build.experimental) {
+            log(
+              '${profile.engine.label} has no stable build for ${profile.version} yet. Using the newest experimental build; expect bugs.',
             );
           }
-          final builds = await download.json(
-            'https://fill.papermc.io/v3/projects/paper/versions/${profile.version}/builds',
-          ) as List;
-          final stable = builds.where((b) => b['channel'] == 'STABLE');
-          if (stable.isEmpty) {
-            throw StateError(
-              'No stable Paper build available for ${profile.version}',
-            );
-          }
-          final item = stable.first['downloads']['server:default'];
-          url = item['url'];
-          hash = item['checksums']['sha256'];
-        } else {
-          final manifest = await download.json(
-            'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json',
+          await download.file(
+            build.url,
+            jar,
+            checksum: build.hash,
+            algorithm: build.algorithm,
+            label: 'Downloading ${profile.engine.label} ${profile.version}',
           );
-          final versions = (manifest['versions'] as List).where(
-            (v) => v['id'] == profile.version,
+          await receipt.writeAsString(
+            jsonEncode({
+              'engine': profile.engine.name,
+              'version': profile.version,
+              'build': build.build,
+              'url': build.url,
+              'hash': build.hash,
+              'downloadedAt': DateTime.now().toIso8601String(),
+            }),
           );
-          if (versions.isEmpty) throw StateError('Minecraft version not found');
-          final metadata = await download.json(versions.first['url']);
-          final item = metadata['downloads']['server'];
-          url = item['url'];
-          hash = item['sha1'];
-          useSha1 = true;
-          final requiredJava =
-              metadata['javaVersion']?['majorVersion'] as int? ?? 21;
-          if (requiredJava > 21) {
-            throw StateError('This build supports Java 21 servers only');
-          }
+          log(
+            'Downloaded ${profile.engine.label} ${profile.version} (${build.build}).',
+          );
         }
-        await download.file(
-          url,
-          jar,
-          checksum: hash,
-          useSha1: useSha1,
-          label: 'Downloading ${profile.engine.name} ${profile.version}',
-        );
-        await receipt.writeAsString(
-          jsonEncode({
-            'url': url,
-            'hash': hash,
-            'downloadedAt': DateTime.now().toIso8601String(),
-          }),
-        );
       }
       await File(p.join(directory.path, 'eula.txt'))
           .writeAsString('# Explicitly accepted in HostCraft\neula=true\n');
       if (!await properties.exists()) {
+        // A new server folder starts with the saved world settings.
+        final world = await WorldConfig.load(root);
         await properties.writeAsString(
-          ServerProperties('').update(ServerProperties.defaults),
+          ServerProperties('')
+              .update({...ServerProperties.defaults, ...world.toProperties()}),
         );
+      }
+      final crossplay = CrossplayService(download, log);
+      if (profile.crossplay) {
+        await crossplay.install(directory, profile.engine, profile.version);
+      } else if (profile.engine.crossplayCapable) {
+        await crossplay.setEnabled(directory, profile.engine, false);
       }
       log('Server files and Java are ready.');
       onPhase(ServerPhase.ready);
@@ -143,8 +172,7 @@ class MinecraftGameServer extends BaseGameServer {
   @override
   Future<void> start() async {
     if (_process != null || _busy) throw StateError('Server is already active');
-    if (!await File(p.join(directory.path, 'server.jar')).exists() ||
-        _java == null) {
+    if (!await isPrepared() || _java == null) {
       await prepare();
     }
     _busy = true;
@@ -155,6 +183,14 @@ class MinecraftGameServer extends BaseGameServer {
     try {
       if (!Platform.isAndroid && !Platform.isWindows) {
         throw StateError('HostCraft supports Android and Windows only.');
+      }
+      if (profile.crossplay) {
+        final patched = await CrossplayService(
+          DownloadService(),
+          log,
+        ).applyConfig(directory, profile.engine, profile.bedrockPort);
+        if (patched) log('Updated the Geyser settings for Bedrock players.');
+        log('Bedrock players connect on UDP port ${profile.bedrockPort}.');
       }
       await BackgroundService.start(profile.name);
       final java = _java!;
@@ -176,6 +212,13 @@ class MinecraftGameServer extends BaseGameServer {
           p.join(directory.path, 'server.jar'),
           'nogui',
         ]);
+      } else if (profile.engine == ServerEngine.forge) {
+        final arguments = await ForgeService.launchFile(directory);
+        if (arguments == null)
+          throw StateError(
+            'Forge installation is incomplete. Prepare the server again.',
+          );
+        args.addAll(['@$arguments', 'nogui']);
       } else {
         args.addAll(['-jar', 'server.jar', 'nogui']);
       }
@@ -191,7 +234,10 @@ class MinecraftGameServer extends BaseGameServer {
       _process = process;
       void consume(String line) {
         log(line);
-        if (line.contains('Done (') && !_stopping) onPhase(ServerPhase.running);
+        if (line.contains('Done (') && !_stopping) {
+          onPhase(ServerPhase.running);
+          if (profile.crossplay) unawaited(_finishCrossplay());
+        }
       }
 
       final out = process.stdout
@@ -225,6 +271,24 @@ class MinecraftGameServer extends BaseGameServer {
       rethrow;
     } finally {
       _busy = false;
+    }
+  }
+
+  /// Geyser creates its config on the first run with defaults that do not let
+  /// Floodgate players in. Patch it once and ask for a single restart.
+  Future<void> _finishCrossplay() async {
+    try {
+      final changed = await CrossplayService(
+        DownloadService(),
+        log,
+      ).applyConfig(directory, profile.engine, profile.bedrockPort);
+      if (changed) {
+        log(
+          'Crossplay setup finished. Restart the server once so Bedrock players can join.',
+        );
+      }
+    } catch (e) {
+      log('Could not finish the crossplay setup: $e');
     }
   }
 

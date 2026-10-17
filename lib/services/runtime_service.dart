@@ -18,11 +18,21 @@ class RuntimeService {
   final Directory root;
   final DownloadService download;
   static const platform = MethodChannel('dev.hostcraft/runtime');
+
+  /// Newest Java the Android build bundles. Minecraft 26.1 and later need Java
+  /// 25, so raise this when a Java 25 runtime is added to the APK.
+  static const androidMaxJava = 21;
   static Future<Map<String, dynamic>> androidInfo() async =>
       Map<String, dynamic>.from(await platform.invokeMethod('info'));
   Future<JavaRuntime> ensure({int major = 21}) async {
     if (Platform.isAndroid) {
-      download.onProgress?.call('Installing bundled Android Java 21', null);
+      if (major > androidMaxJava) {
+        throw StateError(
+          'This Minecraft version needs Java $major, but the Android app bundles Java $androidMaxJava. '
+          'Choose an older version (1.21.11 or earlier), or host on Windows.',
+        );
+      }
+      download.step('Installing bundled Android Java $androidMaxJava');
       final info = Map<String, dynamic>.from(
         await platform.invokeMethod('installRuntime'),
       );
@@ -62,7 +72,7 @@ class RuntimeService {
     );
     if (await dest.exists()) await dest.delete(recursive: true);
     await dest.create(recursive: true);
-    download.onProgress?.call('Extracting Java $major', null);
+    download.step('Extracting Java $major');
     await extractFileToDisk(archive.path, dest.path);
     final executable = await dest
         .list(recursive: true)

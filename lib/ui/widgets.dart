@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/models.dart';
+import '../core/progress.dart';
 import 'theme.dart';
 
 Future<void> openLink(BuildContext context, String url) async {
@@ -27,10 +28,15 @@ class PageBody extends StatelessWidget {
   final List<Widget> children;
   @override
   Widget build(BuildContext context) => SingleChildScrollView(
-    padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+    padding: EdgeInsets.fromLTRB(
+      MediaQuery.sizeOf(context).width > 850 ? 32 : 20,
+      24,
+      MediaQuery.sizeOf(context).width > 850 ? 32 : 20,
+      32,
+    ),
     child: Center(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 820),
+        constraints: const BoxConstraints(maxWidth: 1180),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: children,
@@ -52,7 +58,7 @@ class SectionHeading extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.hc;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(2, 4, 2, 18),
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -70,7 +76,7 @@ class SectionHeading extends StatelessWidget {
             title,
             style: TextStyle(
               color: c.text,
-              fontSize: 28,
+              fontSize: MediaQuery.sizeOf(context).width > 850 ? 32 : 27,
               fontWeight: FontWeight.w800,
               height: 1.15,
               letterSpacing: -.6,
@@ -87,7 +93,7 @@ class SectionHeading extends StatelessWidget {
   }
 }
 
-/// A flat surface: solid fill, hairline border, no shadow.
+/// A consistent bordered panel shared by the app's tools.
 class FlatCard extends StatelessWidget {
   const FlatCard({
     super.key,
@@ -111,7 +117,7 @@ class FlatCard extends StatelessWidget {
           color: color ?? c.surface,
           elevation: 0,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(18),
             side: BorderSide(color: borderColor ?? c.border),
           ),
           child: Padding(padding: padding, child: child),
@@ -144,7 +150,7 @@ class StatusPill extends StatelessWidget {
   final Color color;
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
     decoration: BoxDecoration(
       color: color.withValues(alpha: .14),
       borderRadius: BorderRadius.circular(30),
@@ -267,17 +273,37 @@ class MetricTile extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: c.accent, size: 22),
-          const SizedBox(height: 12),
-          Eyebrow(label),
-          const SizedBox(height: 6),
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: c.accentSoft,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: c.accent, size: 18),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: c.muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
           FittedBox(
             fit: BoxFit.scaleDown,
             alignment: Alignment.centerLeft,
             child: Text(
               value,
               style: TextStyle(
-                fontSize: 26,
+                fontSize: 28,
                 fontWeight: FontWeight.w700,
                 color: c.text,
               ),
@@ -345,6 +371,88 @@ class StepTile extends StatelessWidget {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Progress bar, size and speed for the transfer that is running right now.
+class DownloadStrip extends StatelessWidget {
+  const DownloadStrip({super.key, required this.progress});
+  final DownloadProgress progress;
+  @override
+  Widget build(BuildContext context) {
+    final c = context.hc;
+    final p = progress;
+    final fraction = p.fraction;
+    final eta = p.eta;
+    final details = <String>[
+      if (!p.isStep)
+        p.total == null
+            ? formatBytes(p.received)
+            : '${formatBytes(p.received)} of ${formatBytes(p.total!)}',
+      if (!p.isStep && p.bytesPerSecond > 0) formatSpeed(p.bytesPerSecond),
+      if (eta != null) '${formatDuration(eta)} left',
+    ];
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: c.surfaceAlt,
+        border: Border(bottom: BorderSide(color: c.border)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                p.isStep ? Icons.settings_outlined : Icons.download_rounded,
+                size: 18,
+                color: c.accent,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  p.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                    color: c.text,
+                  ),
+                ),
+              ),
+              if (fraction != null)
+                Text(
+                  '${(fraction * 100).floor()}%',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                    color: c.accent,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: fraction,
+              minHeight: 6,
+              color: c.accent,
+              backgroundColor: c.border,
+            ),
+          ),
+          if (details.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              details.join('  ·  '),
+              style: TextStyle(fontSize: 12, color: c.muted),
+            ),
+          ],
         ],
       ),
     );

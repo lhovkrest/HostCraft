@@ -1,6 +1,47 @@
 import 'dart:convert';
 
-enum ServerEngine { paper, vanilla }
+enum ServerEngine { vanilla, paper, folia, purpur, fabric, forge }
+
+/// Display text and capabilities for each server software.
+extension ServerEngineInfo on ServerEngine {
+  String get label => switch (this) {
+    ServerEngine.vanilla => 'Vanilla',
+    ServerEngine.paper => 'Paper',
+    ServerEngine.folia => 'Folia',
+    ServerEngine.purpur => 'Purpur',
+    ServerEngine.fabric => 'Fabric',
+    ServerEngine.forge => 'Forge',
+  };
+
+  String get summary => switch (this) {
+    ServerEngine.vanilla => 'Official Mojang server. No plugins or mods.',
+    ServerEngine.paper =>
+      'Fast and stable. Runs Bukkit and Spigot plugins. Best default.',
+    ServerEngine.folia =>
+      'Paper with multi-threaded regions. Many plugins do not work. Advanced.',
+    ServerEngine.purpur =>
+      'Paper with extra gameplay options. Runs Bukkit and Spigot plugins.',
+    ServerEngine.fabric => 'Lightweight mod loader. Runs Fabric mods.',
+    ServerEngine.forge =>
+      'Classic modpacks and big adventures. Runs Forge mods.',
+  };
+
+  /// Runs Bukkit/Spigot plugins from a `plugins` folder.
+  bool get usesPlugins =>
+      this == ServerEngine.paper ||
+      this == ServerEngine.folia ||
+      this == ServerEngine.purpur;
+
+  /// PaperMC asks API users to identify themselves with a contact.
+  bool get needsContact =>
+      this == ServerEngine.paper || this == ServerEngine.folia;
+
+  /// Bedrock players can join through Geyser on this software.
+  bool get crossplayCapable =>
+      this == ServerEngine.paper ||
+      this == ServerEngine.purpur ||
+      this == ServerEngine.fabric;
+}
 
 enum ServerPhase { idle, preparing, ready, starting, running, stopping, failed }
 
@@ -12,6 +53,8 @@ class ServerProfile {
     this.memoryMb = 2048,
     this.eulaAccepted = false,
     this.contact = '',
+    this.crossplay = false,
+    this.bedrockPort = 19132,
   });
   final String name;
   final ServerEngine engine;
@@ -19,6 +62,12 @@ class ServerProfile {
   final int memoryMb;
   final bool eulaAccepted;
   final String contact;
+
+  /// Lets Bedrock players join through Geyser and Floodgate.
+  final bool crossplay;
+
+  /// UDP port Geyser listens on for Bedrock players.
+  final int bedrockPort;
   String get key => '${engine.name}-$version';
   ServerProfile copyWith({
     String? name,
@@ -27,6 +76,8 @@ class ServerProfile {
     int? memoryMb,
     bool? eulaAccepted,
     String? contact,
+    bool? crossplay,
+    int? bedrockPort,
   }) => ServerProfile(
     name: name ?? this.name,
     engine: engine ?? this.engine,
@@ -34,6 +85,8 @@ class ServerProfile {
     memoryMb: memoryMb ?? this.memoryMb,
     eulaAccepted: eulaAccepted ?? this.eulaAccepted,
     contact: contact ?? this.contact,
+    crossplay: crossplay ?? this.crossplay,
+    bedrockPort: bedrockPort ?? this.bedrockPort,
   );
   Map<String, dynamic> toJson() => {
     'name': name,
@@ -42,14 +95,19 @@ class ServerProfile {
     'memoryMb': memoryMb,
     'eulaAccepted': eulaAccepted,
     'contact': contact,
+    'crossplay': crossplay,
+    'bedrockPort': bedrockPort,
   };
   factory ServerProfile.fromJson(Map<String, dynamic> json) => ServerProfile(
     name: json['name'] as String,
-    engine: ServerEngine.values.byName(json['engine']),
+    engine:
+        ServerEngine.values.asNameMap()[json['engine']] ?? ServerEngine.vanilla,
     version: json['version'] as String,
     memoryMb: json['memoryMb'] as int,
     eulaAccepted: json['eulaAccepted'] == true,
     contact: json['contact'] as String? ?? '',
+    crossplay: json['crossplay'] == true,
+    bedrockPort: json['bedrockPort'] as int? ?? 19132,
   );
 }
 

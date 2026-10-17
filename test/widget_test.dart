@@ -6,7 +6,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hostcraft/core/host_controller.dart';
 import 'package:hostcraft/core/models.dart';
 import 'package:hostcraft/services/minecraft_server.dart';
+import 'package:hostcraft/services/server_catalog.dart';
+import 'package:hostcraft/services/download_service.dart';
+import 'package:hostcraft/services/mod_service.dart';
 import 'package:hostcraft/ui/hostcraft_app.dart';
+import 'package:hostcraft/ui/screens/mods_screen.dart';
 
 class PreviewHost extends HostController {
   PreviewHost() {
@@ -25,9 +29,52 @@ class PreviewHost extends HostController {
   Future<Map<String, String>> readSettings() async => {
     ...ServerProperties.defaults,
   };
+  @override
+  ServerCatalog catalogFor(String contact) => PreviewCatalog();
+  @override
+  Future<List<InstalledAddon>> listAddons() async => [];
+}
+
+class PreviewCatalog extends ServerCatalog {
+  PreviewCatalog() : super(DownloadService());
+  @override
+  Future<List<String>> versions(
+    ServerEngine engine, {
+    bool snapshots = false,
+  }) async => ['1.21.1'];
+  @override
+  Future<int> javaMajor(String version) async => 21;
 }
 
 void main() {
+  testWidgets('saved CurseForge keys can be replaced or cleared from the UI', (
+    tester,
+  ) async {
+    final host = PreviewHost()..curseForgeKey = 'previous-test-key';
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [hostProvider.overrideWith((ref) => host)],
+        child: const MaterialApp(home: ModsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Change CurseForge API key'));
+    await tester.pumpAndSettle();
+    final field = find.byType(TextField);
+    expect(tester.widget<TextField>(field).obscureText, isTrue);
+    expect(find.text('previous-test-key'), findsNothing);
+    await tester.enterText(field, 'replacement-test-key');
+    await tester.tap(find.text('Save key'));
+    await tester.pumpAndSettle();
+    expect(host.curseForgeKey, 'replacement-test-key');
+    await tester.tap(find.byTooltip('Change CurseForge API key'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Use environment key'));
+    await tester.pumpAndSettle();
+    expect(host.curseForgeKey, isEmpty);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets('phone layout navigates and gates setup behind EULA choice', (
     tester,
   ) async {
@@ -51,9 +98,14 @@ void main() {
       find.widgetWithText(FilledButton, 'Save setup'),
     );
     expect(save.onPressed, isNull);
-    await tester.tap(find.text('Cancel'));
+    await tester.tap(find.byTooltip('Close setup'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Console'));
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('Console'),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(find.text('Live console'), findsOneWidget);
     await tester.tap(find.text('Network'));

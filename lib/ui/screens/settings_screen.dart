@@ -6,6 +6,8 @@ import '../../core/app_info.dart';
 import '../../core/host_controller.dart';
 import '../theme.dart';
 import '../widgets.dart';
+import '../world_settings_page.dart';
+import '../server_setup_sheet.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key, required this.host});
@@ -66,7 +68,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return PageBody(
       children: [
         const SectionHeading(
-          eyebrow: 'World controls',
+          eyebrow: 'Preferences',
           title: 'Your server, your rules.',
           subtitle: 'Settings take effect the next time your server starts.',
         ),
@@ -107,6 +109,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ),
         ),
+        FlatCard(
+          child: Column(
+            children: [
+              ListTile(
+                leading: Icon(Icons.dns_outlined, color: c.accent),
+                title: const Text('Server software & crossplay'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: host.locked ? null : () => showServerSetup(context),
+              ),
+              ListTile(
+                leading: Icon(Icons.folder_outlined, color: c.accent),
+                title: const Text('World settings & backups'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const WorldSettingsPage()),
+                ),
+              ),
+            ],
+          ),
+        ),
         if (host.active)
           Notice(
             icon: Icons.lock_outline,
@@ -122,24 +145,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Gameplay',
+                    'Connection & access',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 18),
-                  _dropdown('gamemode', 'Game mode', [
-                    'survival',
-                    'creative',
-                    'adventure',
-                    'spectator',
-                  ]),
-                  const SizedBox(height: 14),
-                  _dropdown('difficulty', 'Difficulty', [
-                    'peaceful',
-                    'easy',
-                    'normal',
-                    'hard',
-                  ]),
-                  const SizedBox(height: 14),
                   TextFormField(
                     controller: players,
                     keyboardType: TextInputType.number,
@@ -161,7 +170,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     maxLength: 120,
                     decoration: const InputDecoration(
                       labelText: 'Message of the day',
-                      helperText: 'Minecraft color codes use §, e.g. §aWelcome!',
+                      helperText:
+                          'Minecraft color codes use §, e.g. §aWelcome!',
                     ),
                     onChanged: (_) => setState(() {}),
                   ),
@@ -198,8 +208,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   if (values!['online-mode'] != 'true')
                     Notice(
-                      text:
-                          'With verification disabled, players can impersonate usernames. Keep verification on for public servers.',
+                      text: 'With verification disabled, players can impersonate usernames. Keep verification on for public servers.',
                     ),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
@@ -290,6 +299,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 icon: const Icon(Icons.verified_outlined, size: 18),
                 label: const Text('Check Java runtime'),
               ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: host.locked ? null : host.updateServerFiles,
+                icon: const Icon(Icons.system_update_alt),
+                label: const Text('Update server files'),
+              ),
               const SizedBox(height: 16),
               const Eyebrow('Server files'),
               const SizedBox(height: 6),
@@ -317,23 +332,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _dropdown(String key, String label, List<String> options) =>
-      DropdownButtonFormField<String>(
-        isExpanded: true,
-        initialValue: options.contains(values![key])
-            ? values![key]
-            : options.first,
-        decoration: InputDecoration(labelText: label),
-        items: options
-            .map(
-              (v) => DropdownMenuItem(
-                value: v,
-                child: Text('${v[0].toUpperCase()}${v.substring(1)}'),
-              ),
-            )
-            .toList(),
-        onChanged: (v) => values![key] = v!,
-      );
   String? _number(String? text, int min, int max) {
     final n = int.tryParse(text ?? '');
     return n == null || n < min || n > max
@@ -346,15 +344,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => saving = true);
     await widget.host.action(() async {
       await widget.host.saveSettings({
-        ...values!,
+        'online-mode': values!['online-mode']!,
+        'white-list': values!['white-list']!,
         'motd': motd.text,
         'max-players': players.text,
         'server-port': port.text,
       });
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Settings saved.')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Settings saved.')));
       }
     });
     if (mounted) setState(() => saving = false);

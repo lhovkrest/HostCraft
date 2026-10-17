@@ -24,8 +24,17 @@ class _Cancelled implements Exception {
 /// carry the traffic once the tunnel exists, so nothing depends on parsing the
 /// agent's console output any more.
 class TunnelService {
-  TunnelService(this.root, this.onLog, this.onChange, {this.localPort});
+  TunnelService(
+    this.root,
+    this.onLog,
+    this.onChange, {
+    this.localPort,
+    this.bedrockPort,
+  });
   final int Function()? localPort;
+
+  /// UDP port of Geyser, or null when Bedrock crossplay is off.
+  final int? Function()? bedrockPort;
   final Directory root;
   final void Function(String) onLog;
   final void Function() onChange;
@@ -45,6 +54,12 @@ class TunnelService {
   String? warning;
   String? claimUrl;
   String? address;
+
+  /// Public address for Bedrock players (host:port), when crossplay is on.
+  String? bedrockAddress;
+
+  /// Why the Bedrock tunnel is missing even though Java works.
+  String? bedrockNote;
 
   bool get running => _process != null;
   bool get busy =>
@@ -96,9 +111,8 @@ class TunnelService {
     final file = File(secretPath);
     if (!await file.exists()) return null;
     final text = (await file.readAsString()).trim();
-    final toml = RegExp(
-      r'''secret_key\s*=\s*["']([0-9a-fA-F]+)["']''',
-    ).firstMatch(text);
+    final toml = RegExp(r'''secret_key\s*=\s*["']([0-9a-fA-F]+)["']''')
+        .firstMatch(text);
     if (toml != null) return toml[1];
     if (RegExp(r'^[0-9a-fA-F]+$').hasMatch(text)) return text;
     return null;
@@ -106,7 +120,8 @@ class TunnelService {
 
   Future<void> _writeSecret(String secret) async {
     await Directory(p.dirname(secretPath)).create(recursive: true);
-    await File(secretPath).writeAsString('secret_key = "$secret"\n', flush: true);
+    await File(secretPath)
+        .writeAsString('secret_key = "$secret"\n', flush: true);
   }
 
   /// Whether a Playit account link is stored on this device.
@@ -184,7 +199,10 @@ class TunnelService {
         }
         var state = '';
         try {
-          state = await api.claimSetup(code, version: 'playit-agent $playitAgentVersion');
+          state = await api.claimSetup(
+            code,
+            version: 'playit-agent $playitAgentVersion',
+          );
         } on PlayitApiException catch (e) {
           if (e.code == 'CodeExpired' || e.code == 'InvalidCode') rethrow;
           await _wait(const Duration(seconds: 3), cancelled);
@@ -250,6 +268,16 @@ class TunnelService {
     return fallback;
   }
 
+  static PlayitTunnel? _pickBedrock(List<PlayitTunnel> tunnels, int port) {
+    PlayitTunnel? fallback;
+    for (final tunnel in tunnels) {
+      if (tunnel.localPort != port || !tunnel.carriesUdp) continue;
+      if (tunnel.tunnelType == 'minecraft-bedrock') return tunnel;
+      fallback ??= tunnel;
+    }
+    return fallback;
+  }
+
   Future<String> _addressFor(PlayitApi api, PlayitTunnel tunnel) async {
     try {
       final display = await api.displayAddresses();
@@ -259,23 +287,35 @@ class TunnelService {
     }
   }
 
-    Future<PlayitTunnel> _ensureTunnel(
+  Future<PlayitTunnel> _ensureTunnel(
     PlayitApi api,
     int port,
-    bool Function() cancelled,
-  ) async {
+    bool Function() cancelled, {
+    bool bedrock = false,
+  }) async {
+    PlayitTunnel? find(PlayitRunData d) =>
+        bedrock ? _pickBedrock(d.tunnels, port) : _pick(d.tunnels, port);
+    final label = bedrock ? 'Bedrock' : 'Java';
     var data = await api.agentRunData();
-    var tunnel = _pick(data.tunnels, port);
+    var tunnel = find(data);
     if (tunnel == null) {
-      onLog('Creating a Minecraft tunnel for port $port on Playit…');
-      _set(TunnelPhase.creating, 'Creating your Minecraft tunnel…');
-      for (var i = 0;; i++) {
+      onLog('Creating a Minecraft $label tunnel for port $port on Playit…');
+      _set(TunnelPhase.creating, 'Creating your $label tunnel…');
+      for (var i = 0; ; i++) {
         try {
-          await api.createMinecraftTunnel(agentId: data.agentId, localPort: port);
+          await api.createTunnel(
+            agentId: data.agentId,
+            localPort: port,
+            tunnelType: bedrock ? 'minecraft-bedrock' : 'minecraft-java',
+            portType: bedrock ? 'udp' : 'tcp',
+            name: bedrock ? 'HostCraft Bedrock' : 'HostCraft',
+          );
           break;
         } on PlayitApiException catch (e) {
           // The agent may still be registering with Playit. Wait and retry.
-          if ((e.code != 'AgentVersionTooOld' && !e.network) || i >= 15) rethrow;
+          if ((e.code != 'AgentVersionTooOld' && !e.network) || i >= 15) {
+            rethrow;
+          }
           await _wait(const Duration(seconds: 2), cancelled);
           if (cancelled()) throw const _Cancelled();
           data = await api.agentRunData();
@@ -284,19 +324,19 @@ class TunnelService {
       for (var attempt = 0; attempt < 30; attempt++) {
         await _wait(const Duration(seconds: 1), cancelled);
         data = await api.agentRunData();
-        tunnel = _pick(data.tunnels, port);
+        tunnel = find(data);
         if (tunnel != null && tunnel.ready) break;
       }
     }
     final result = tunnel;
     if (result == null || !result.ready) {
-      throw const PlayitApiException(
-        'Playit is still preparing your tunnel. Wait a moment and connect again.',
+      throw PlayitApiException(
+        'Playit is still preparing your $label tunnel. Wait a moment and connect again.',
       );
     }
     if (result.disabled) {
       throw PlayitApiException(
-        'Your Playit tunnel for port $port is disabled. Enable it in the Playit dashboard, then connect again.',
+        'Your Playit $label tunnel for port $port is disabled. Enable it in the Playit dashboard, then connect again.',
       );
     }
     return result;
@@ -313,7 +353,7 @@ class TunnelService {
     );
   }
 
-    Future<void> start() async {
+  Future<void> start() async {
     if (running || busy) return;
     final session = ++_session;
     bool cancelled() => session != _session;
@@ -321,6 +361,8 @@ class TunnelService {
     warning = null;
     claimUrl = null;
     address = null;
+    bedrockAddress = null;
+    bedrockNote = null;
     _set(TunnelPhase.linking, 'Checking your Playit account…');
     PlayitApi? api;
     try {
@@ -359,6 +401,36 @@ class TunnelService {
         return;
       }
 
+      // Bedrock is optional: if its tunnel cannot be made (for example the
+      // free tunnel limit is used up), Java players can still join.
+      final bedrockLocal = bedrockPort?.call();
+      if (bedrockLocal != null) {
+        try {
+          final bedrock = await _ensureTunnel(
+            api,
+            bedrockLocal,
+            cancelled,
+            bedrock: true,
+          );
+          bedrockAddress = await _addressFor(api, bedrock);
+        } on _Cancelled {
+          rethrow;
+        } on PlayitApiException catch (e) {
+          if (e.auth || _process == null) rethrow;
+          bedrockNote = 'Bedrock tunnel unavailable: ${e.message}';
+          onLog('Playit: $bedrockNote');
+        } catch (e) {
+          if (_process == null) rethrow;
+          bedrockNote = 'Bedrock tunnel unavailable: $e';
+          onLog('Playit: $bedrockNote');
+        }
+        if (cancelled()) {
+          await _killAgent();
+          api.close();
+          return;
+        }
+      }
+
       _api?.close();
       _api = api;
       _set(TunnelPhase.connected, 'Connected');
@@ -374,6 +446,7 @@ class TunnelService {
       error = _message(e);
       onLog('Playit: $error');
       address = null;
+      bedrockAddress = null;
       _set(TunnelPhase.failed, '');
     }
   }
@@ -384,6 +457,14 @@ class TunnelService {
   String get _socketPath => Platform.isWindows
       ? r'\\.\pipe\hostcraft-playitd'
       : p.join(p.dirname(secretPath), 'playitd.sock');
+
+  /// Command line for the agent. The bundled Android `libplayit.so` is an
+  /// older build that only understands `--secret_path <PATH>` (underscore);
+  /// the Windows download is the Playit 1.0 daemon, which uses hyphenated
+  /// flags. Passing the wrong style makes the agent exit with code 2.
+  List<String> get _agentArgs => Platform.isAndroid
+      ? [..._prefix, '--secret_path', secretPath]
+      : ['--secret-path', secretPath, '--socket-path', _socketPath];
 
   Future<void> _startAgent() async {
     _recent.clear();
@@ -399,13 +480,7 @@ class TunnelService {
     // never be used to carry traffic from inside the app.
     final process = await Process.start(
       _executable!,
-      [
-        ..._prefix,
-        '--secret-path',
-        secretPath,
-        '--socket-path',
-        _socketPath,
-      ],
+      _agentArgs,
       workingDirectory: p.dirname(secretPath),
       environment: {
         'HOME': root.path,
@@ -437,6 +512,7 @@ class TunnelService {
             phase == TunnelPhase.starting ||
             phase == TunnelPhase.creating) {
           address = null;
+          bedrockAddress = null;
           error = _agentGone().message.replaceFirst(
             'before the tunnel was ready',
             'unexpectedly (exit code $code)',
@@ -459,9 +535,8 @@ class TunnelService {
       warning = problem;
       onChange();
     }
-    final claim = RegExp(
-      r'https://playit\.gg/claim/[a-zA-Z0-9_-]+',
-    ).firstMatch(clean);
+    final claim = RegExp(r'https://playit\.gg/claim/[a-zA-Z0-9_-]+')
+        .firstMatch(clean);
     if (claim != null && claimUrl != claim[0]) {
       // The agent lost its link and is asking for approval again.
       claimUrl = claim[0];
@@ -487,6 +562,17 @@ class TunnelService {
         if (session == _session && latest != address) {
           address = latest;
           onChange();
+        }
+        final bedrockLocal = bedrockPort?.call();
+        if (bedrockLocal != null && bedrockAddress != null) {
+          final bedrock = _pickBedrock(data.tunnels, bedrockLocal);
+          if (bedrock != null) {
+            final fresh = await _addressFor(api, bedrock);
+            if (session == _session && fresh != bedrockAddress) {
+              bedrockAddress = fresh;
+              onChange();
+            }
+          }
         }
       } catch (_) {
         // A missed refresh is harmless; the next one will try again.
@@ -521,6 +607,8 @@ class TunnelService {
     warning = null;
     claimUrl = null;
     address = null;
+    bedrockAddress = null;
+    bedrockNote = null;
     onChange();
   }
 

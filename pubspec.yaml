@@ -39,6 +39,7 @@ dependencies:
   path: ^1.9.1
   http: ^1.6.0
   crypto: ^3.0.7
+  file_picker: ^8.0.0
   archive: ^4.5.2
   flutter_foreground_task: ^11.0.3
   url_launcher: ^6.3.3
@@ -71,6 +72,20 @@ flutter:
   uses-material-design: true
   assets:
     - assets/tray_icon.ico
+    - assets/fonts/OFL-Manrope.txt
+  fonts:
+    - family: Manrope
+      fonts:
+        - asset: assets/fonts/Manrope.ttf
+          weight: 400
+        - asset: assets/fonts/Manrope.ttf
+          weight: 500
+        - asset: assets/fonts/Manrope.ttf
+          weight: 600
+        - asset: assets/fonts/Manrope.ttf
+          weight: 700
+        - asset: assets/fonts/Manrope.ttf
+          weight: 800
 
   # To add assets to your application, add an assets section, like this:
   # assets:
